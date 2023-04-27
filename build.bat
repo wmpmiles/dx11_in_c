@@ -1,0 +1,1 @@
+cl /Wall /Zi e02.c /link /DEBUG:FULL
