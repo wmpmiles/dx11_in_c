@@ -27,11 +27,18 @@
 #include "e02_pixel.h"
 
 typedef float M4x4[4][4];
+typedef float F3[3];
 
 struct ConstantBuffer {
-    M4x4 world;
-    M4x4 view;
-    M4x4 projection;
+    _Alignas(16) M4x4 world;
+    _Alignas(16) M4x4 view;
+    _Alignas(16) M4x4 projection;
+};
+_Static_assert(_Alignof(struct ConstantBuffer) >= 16, "Constant buffer must have an alignment equal to or greater than 16 bytes.");
+
+struct VertPosColor {
+    F3 pos;
+    F3 color;
 };
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -66,8 +73,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     ID3D11InputLayout      *pInputLayout      = NULL;
     ID3D11PixelShader      *pPixelShader      = NULL;
     ID3D11Buffer           *pConstantBuffer   = NULL;
+    ID3D11Buffer           *pVertexBuffer     = NULL;
+    ID3D11Buffer           *pIndexBuffer      = NULL;
 
     D3D11_TEXTURE2D_DESC bb_desc;
+
+    //
+    // === WINDOW SETUP ===
+    //
 
     { // Register the window class.
         WNDCLASS wc = {
@@ -97,6 +110,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             goto cleanup;
         }
     }
+
+    //
+    // === D3D11 / DXGI SETUP ===
+    //
 
     { // Create D3D11 device
         D3D_FEATURE_LEVEL level;
@@ -184,6 +201,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         pContext->lpVtbl->RSSetViewports(pContext, 1, &viewport);
     }
 
+    //
+    // === SHADER SETUP ===
+    //
+
     { // Create vertex shader
         hr = pD3D11Device->lpVtbl->CreateVertexShader(
             pD3D11Device,
@@ -242,11 +263,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     { // Create constant buffer
         D3D11_BUFFER_DESC cb_desc = {
             .ByteWidth = sizeof(struct ConstantBuffer),
-            .Usage = D3D11_USAGE_DEFAULT,
             .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
-            .CPUAccessFlags = 0,
-            .MiscFlags = 0,
-            .StructureByteStride = 0
         };
 
         hr = pD3D11Device->lpVtbl->CreateBuffer(
@@ -257,6 +274,87 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         );
         CHECK_HR;
     }
+
+    //
+    // === CUBE SETUP ===
+    // 
+
+    { // Create vertex buffer
+        struct VertPosColor CubeVerts[] = {
+            {{-0.5f, -0.5f, -0.5f}, {0, 0, 0}},
+            {{-0.5f, -0.5f,  0.5f}, {0, 0, 1}},
+            {{-0.5f,  0.5f, -0.5f}, {0, 1, 0}},
+            {{-0.5f,  0.5f,  0.5f}, {0, 1, 1}},
+            {{ 0.5f, -0.5f, -0.5f}, {1, 0, 0}},
+            {{ 0.5f, -0.5f,  0.5f}, {1, 0, 1}},
+            {{ 0.5f,  0.5f, -0.5f}, {1, 1, 0}},
+            {{ 0.5f,  0.5f,  0.5f}, {1, 1, 1}},
+        };
+
+        D3D11_BUFFER_DESC v_desc = {
+            .ByteWidth = sizeof(CubeVerts),
+            .BindFlags = D3D11_BIND_VERTEX_BUFFER,
+        };
+
+        D3D11_SUBRESOURCE_DATA v_data = {
+            .pSysMem = CubeVerts,
+            .SysMemPitch = 0,
+            .SysMemSlicePitch = 0,
+        };
+
+        hr = pD3D11Device->lpVtbl->CreateBuffer(
+            pD3D11Device,
+            &v_desc,
+            &v_data,
+            &pVertexBuffer
+        );
+        CHECK_HR;
+    }
+
+    { // Create index buffer
+        unsigned short CubeIndices[] = {
+            0, 2, 1, // -x
+            1, 2, 3,
+
+            4, 5, 6, // +x
+            5, 7, 6,
+
+            0, 1, 5, // -y
+            0, 5, 4,
+
+            2, 6, 7, // +y
+            2, 7, 3,
+
+            0, 4, 6, // -z
+            0, 6, 2,
+
+            1, 3, 7, // +z
+            1, 7, 5,
+        };
+
+        D3D11_BUFFER_DESC i_desc = {
+            .ByteWidth = sizeof(CubeIndices),
+            .BindFlags = D3D11_BIND_INDEX_BUFFER,
+        };
+
+        D3D11_SUBRESOURCE_DATA i_data = {
+            .pSysMem = CubeIndices,
+            .SysMemPitch = 0,
+            .SysMemSlicePitch = 0,
+        };
+
+        hr = pD3D11Device->lpVtbl->CreateBuffer(
+            pD3D11Device,
+            &i_desc,
+            &i_data,
+            &pIndexBuffer
+        );
+        CHECK_HR;
+    }
+
+    //
+    // === RUN WINDOW ===
+    //
 
     { // Show window
         ShowWindow(hwnd, nCmdShow);
@@ -281,6 +379,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 #undef CHECK_HR
 cleanup:
 #define RELEASE(p) { if (p) p->lpVtbl->Release(p); p = NULL; }
+    RELEASE(pIndexBuffer);
+    RELEASE(pVertexBuffer);
     RELEASE(pConstantBuffer);
     RELEASE(pPixelShader);
     RELEASE(pInputLayout);
