@@ -23,32 +23,10 @@
 #include <dxgi1_3.h>
 #pragma warning ( pop )
 
-#include <intrin.h>
-
 #include "e02_vertex.h"
 #include "e02_pixel.h"
 
-typedef union {
-    struct {
-        float x;
-        float y;
-        float z;
-        float w;
-    };
-    _Alignas(16) float values[4];
-} RawF4;
-_Static_assert(_Alignof(RawF4) >= 16, "");
-
-typedef union {
-    struct {
-        RawF4 x;
-        RawF4 y;
-        RawF4 z;
-        RawF4 w;
-    };
-    _Alignas(64) float values[16];
-} RawF16;
-_Static_assert(_Alignof(RawF16) >= 64, "");
+#include "3dmath.c"
 
 typedef struct {
     _Alignas(64) RawF16 world;
@@ -61,140 +39,6 @@ typedef struct {
     RawF4 pos;
     RawF4 color;
 } VertPosColor;
-
-typedef struct {
-    __m128 value;
-} VecF4;
-
-#define VF4_ZERO (vf4_from_rf4((RawF4){ 0.0f, 0.0f, 0.0f, 0.0f }))
-#define VF4_E0 (vf4_from_rf4((RawF4){ 1.0f, 0.0f, 0.0f, 0.0f }))
-#define VF4_E1 (vf4_from_rf4((RawF4){ 0.0f, 1.0f, 0.0f, 0.0f }))
-#define VF4_E2 (vf4_from_rf4((RawF4){ 0.0f, 0.0f, 1.0f, 0.0f }))
-#define VF4_E3 (vf4_from_rf4((RawF4){ 0.0f, 0.0f, 0.0f, 1.0f }))
-
-#define VF4_MASK4(b0, b1, b2, b3) ((unsigned char)(b0 << 0 | b1 << 1 | b2 << 2 | b3 << 3))
-#define VF4_EXTRACT(vec, mask) ((VecF4){ _mm_blend_ps(VF4_ZERO.value, vec.value, mask) })
-#define VF4_MOVE(dst, src, mask) ((VecF4){ _mm_blend_ps(dst.value, src.value, mask) })
-
-#define VF4_SHUFFLE_CTRL(a, b, c, d) (a << 0 | b << 2 | c << 4 | d << 6)
-#define VF4_SHUFFLE(vec, ctrl) ((VecF4){ _mm_shuffle_ps(vec.value, vec.value, ctrl) })
-
-RawF4 __vectorcall rf4_from_vf4(VecF4 vec) {
-    RawF4 ret;
-    _mm_store_ps(ret.values, vec.value);
-    return ret;
-}
-
-VecF4 __vectorcall vf4_from_rf4(RawF4 raw) {
-    return (VecF4){ _mm_load_ps(raw.values) };
-}
-
-VecF4 __vectorcall vf4_broadcast(float value) {
-    return (VecF4){ _mm_set1_ps(value) };
-}
-
-VecF4 __vectorcall vf4_ss_set(float value) {
-    return (VecF4){ _mm_set_ss(value) };
-}
-
-float __vectorcall vf4_ss_get(VecF4 vec) {
-    return _mm_cvtss_f32(vec.value);
-}
-
-VecF4 __vectorcall vf4_sub(VecF4 lhs, VecF4 rhs) {
-    return (VecF4){ _mm_sub_ps(lhs.value, rhs.value) };
-}
-
-VecF4 __vectorcall vf4_mul(VecF4 lhs, VecF4 rhs) {
-    return (VecF4){ _mm_mul_ps(lhs.value, rhs.value) };
-}
-
-VecF4 __vectorcall vf4_dot(VecF4 lhs, VecF4 rhs) {
-    return (VecF4){ _mm_dp_ps(lhs.value, rhs.value, 0xff) };
-}
-
-VecF4 __vectorcall vf4_rsqrt(VecF4 vec) {
-    return (VecF4){ _mm_rsqrt_ps(vec.value) };
-}
-
-VecF4 __vectorcall vf4_tand(VecF4 vec) {
-    return (VecF4){ _mm_tand_ps(vec.value) };
-}
-
-VecF4 __vectorcall vf4_reciprocal(VecF4 vec) {
-    return (VecF4){ _mm_rcp_ps(vec.value) };
-}
-
-VecF4 __vectorcall vf4_negate(VecF4 vec) {
-    return (VecF4){ _mm_sub_ps(VF4_ZERO.value, vec.value) };
-}
-
-VecF4 __vectorcall vf4_normalize(VecF4 vec) {
-    VecF4 norm2 = vf4_dot(vec, vec);
-    VecF4 rnorm = vf4_rsqrt(norm2);
-    return vf4_mul(rnorm, vec);
-}
-
-VecF4 __vectorcall vf4_cross(VecF4 lhs, VecF4 rhs) {
-    __m128 ll = _mm_shuffle_ps(lhs.value, lhs.value, VF4_SHUFFLE_CTRL(1, 2, 0, 3));
-    __m128 lr = _mm_shuffle_ps(rhs.value, rhs.value, VF4_SHUFFLE_CTRL(2, 0, 1, 3));
-    __m128 rl = _mm_shuffle_ps(lhs.value, lhs.value, VF4_SHUFFLE_CTRL(2, 0, 1, 3));
-    __m128 rr = _mm_shuffle_ps(rhs.value, rhs.value, VF4_SHUFFLE_CTRL(1, 2, 0, 3));
-    __m128 l = _mm_mul_ps(ll, lr);
-    __m128 r = _mm_mul_ps(rl, rr);
-    return (VecF4){ _mm_sub_ps(l, r) };
-}
-
-typedef union {
-    struct {
-        VecF4 x;
-        VecF4 y;
-        VecF4 z;
-        VecF4 w;
-    };
-    VecF4 values[4];
-} MatF4x4;
-
-MatF4x4 mf4x4_from_vf4(VecF4 x, VecF4 y, VecF4 z, VecF4 w) {
-    return (MatF4x4){ x, y, z, w };
-}
-
-void __vectorcall mf4x4_transpose_inplace(MatF4x4 *mat) {
-    _MM_TRANSPOSE4_PS(mat->x.value, mat->y.value, mat->z.value, mat->w.value);
-}
-
-MatF4x4 __vectorcall mf4x4_transpose(MatF4x4 mat) {
-    mf4x4_transpose_inplace(&mat);
-    return mat;
-}
-
-RawF16 __vectorcall rf16_from_mf4x4(MatF4x4 mat) {
-    return (RawF16) {
-        rf4_from_vf4(mat.x),
-        rf4_from_vf4(mat.y),
-        rf4_from_vf4(mat.z),
-        rf4_from_vf4(mat.w)
-    };
-}
-
-VecF4 mf4x4_element_dot_vf4(MatF4x4 mat, VecF4 vec) {
-    VecF4 x = vf4_dot(mat.x, vec);
-    VecF4 y = vf4_dot(mat.y, vec);
-    VecF4 z = vf4_dot(mat.z, vec);
-    VecF4 w = vf4_dot(mat.w, vec);
-    VecF4 xy = VF4_MOVE(x, y, VF4_MASK4(0, 1, 0, 0));
-    VecF4 zw = VF4_MOVE(z, w, VF4_MASK4(0, 0, 0, 1));
-    return VF4_MOVE(xy, zw, VF4_MASK4(0, 0, 1, 1));
-}
-
-MatF4x4 mf4x4_inv_orthonormal_point(VecF4 u_x, VecF4 u_y, VecF4 u_z, VecF4 p) {
-    MatF4x4 rotation = mf4x4_from_vf4(u_x, u_y, u_z, VF4_E3);
-    VecF4 point = vf4_negate(mf4x4_element_dot_vf4(rotation, p));
-    rotation.x = VF4_MOVE(rotation.x, VF4_SHUFFLE(point, VF4_SHUFFLE_CTRL(0, 0, 0, 0)), VF4_MASK4(0, 0, 0, 1));
-    rotation.y = VF4_MOVE(rotation.y, VF4_SHUFFLE(point, VF4_SHUFFLE_CTRL(0, 0, 0, 1)), VF4_MASK4(0, 0, 0, 1));
-    rotation.z = VF4_MOVE(rotation.z, VF4_SHUFFLE(point, VF4_SHUFFLE_CTRL(0, 0, 0, 2)), VF4_MASK4(0, 0, 0, 1));
-    return rotation;
-}
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
@@ -529,6 +373,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         CHECK_HR;
     }
 
+    // HLSL will (by default) interpret matrix data as being column-major, so
+    // as long as we only pre-multiply in HLSL we should get the same outcome as
+    // using element_dot i.e. make sure all of your matrices are ready for 
+    // multiplication on the CPU side
+
     { // Calculate camera / view transform
         VecF4 p_eye = vf4_from_rf4((RawF4){ 0.0f,  0.7f, 1.5f, 1.0f });
         VecF4 p_at  = vf4_from_rf4((RawF4){ 0.0f, -0.1f, 0.0f, 1.0f });
@@ -538,9 +387,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         VecF4 u_x = vf4_normalize(vf4_cross(v_up, u_z));
         VecF4 u_y = vf4_normalize(vf4_cross(u_z, u_x));
 
+        // Output matrix is ready for element_dot, so we don't have to transpose it
         MatF4x4 tf_view = mf4x4_inv_orthonormal_point(u_x, u_y, u_z, p_eye);
-
-        // HLSL will interpret as column-major, so should be used with pre-multiplication
         constant_buffer.view = rf16_from_mf4x4(tf_view);
     }
     
@@ -571,9 +419,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         VecF4 z = VF4_EXTRACT(coefficients, VF4_MASK4(0, 0, 1, 1));
         VecF4 w = vf4_from_rf4((RawF4){ 0.0f, 0.0f, -1.0f, 0.0f });
 
-        // HLSL will interpret as column-major, so should be used with pre-multiplication
-        MatF4x4 tf_perspective = mf4x4_transpose(mf4x4_from_vf4(x, y, z, w));
-
+        // The above are constructed such that no transpose is required
+        MatF4x4 tf_perspective = mf4x4_from_vf4(x, y, z, w);
         constant_buffer.projection = rf16_from_mf4x4(tf_perspective);
     }
 
