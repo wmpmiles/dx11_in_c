@@ -1,0 +1,1 @@
+del debug.exe debug.ilk debug.pdb e02.ilk e02.obj e02.pdb release.exe release.ilk release.pdb vc140.pdb
