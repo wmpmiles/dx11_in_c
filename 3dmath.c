@@ -50,6 +50,8 @@ typedef union {
 // === MACRO FUNCTIONS ===
 //
 
+#define VF4_FROM(x, y, z, w) (vf4_from_rf4((RawF4){x, y, z, w}))
+
 #define VF4_MASK4(b0, b1, b2, b3) ((unsigned char)(b0 << 0 | b1 << 1 | b2 << 2 | b3 << 3))
 #define VF4_EXTRACT(vec, mask) ((VecF4){ _mm_blend_ps(VF4_ZERO.value, vec.value, mask) })
 #define VF4_MOVE(dst, src, mask) ((VecF4){ _mm_blend_ps(dst.value, src.value, mask) })
@@ -100,6 +102,10 @@ VecF4 __vectorcall vf4_broadcast(float value) {
 // === ELEMENT-WISE ARITHMETIC ===
 //
 
+VecF4 __vectorcall vf4_add(VecF4 lhs, VecF4 rhs) {
+    return (VecF4){ _mm_add_ps(lhs.value, rhs.value) };
+}
+
 VecF4 __vectorcall vf4_sub(VecF4 lhs, VecF4 rhs) {
     return (VecF4){ _mm_sub_ps(lhs.value, rhs.value) };
 }
@@ -126,6 +132,40 @@ VecF4 __vectorcall vf4_tand(VecF4 vec) {
 
 VecF4 __vectorcall vf4_rsqrt(VecF4 vec) {
     return (VecF4){ _mm_rsqrt_ps(vec.value) };
+}
+
+VecF4 __vectorcall vf4_eq(VecF4 lhs, VecF4 rhs) {
+    return (VecF4){ _mm_cmpeq_ps(lhs.value, rhs.value) };
+}
+
+VecF4 __vectorcall vf4_gt(VecF4 lhs, VecF4 rhs) {
+    return (VecF4){ _mm_cmpgt_ps(lhs.value, rhs.value) };
+}
+
+VecF4 __vectorcall vf4_ge(VecF4 lhs, VecF4 rhs) {
+    return (VecF4){ _mm_cmpge_ps(lhs.value, rhs.value) };
+}
+
+VecF4 __vectorcall vf4_lt(VecF4 lhs, VecF4 rhs) {
+    return (VecF4){ _mm_cmplt_ps(lhs.value, rhs.value) };
+}
+
+VecF4 __vectorcall vf4_le(VecF4 lhs, VecF4 rhs) {
+    return (VecF4){ _mm_cmple_ps(lhs.value, rhs.value) };
+}
+
+VecF4 __vectorcall vf4_abs(VecF4 vec) {
+    const VecF4 mask = (VecF4){ _mm_castsi128_ps(_mm_set1_epi32(0x7fffffff)) };
+    return (VecF4){ _mm_and_ps(mask.value, vec.value) };
+}
+
+_Bool __vectorcall vf4_epsilon_equal(VecF4 lhs, VecF4 rhs, float epsilon) {
+    VecF4 scaled_epsilon = vf4_mul(vf4_abs(lhs), vf4_broadcast(epsilon));
+    VecF4 lower = vf4_sub(lhs, scaled_epsilon);
+    VecF4 upper = vf4_add(lhs, scaled_epsilon);
+    VecF4 cmp_lower = vf4_ge(rhs, lower);
+    VecF4 cmp_upper = vf4_le(rhs, upper);
+    return (_mm_movemask_ps(cmp_upper.value) == 0b1111) && (_mm_movemask_ps(cmp_lower.value) == 0b1111);
 }
 
 //
