@@ -23,6 +23,9 @@
 #include <dxgi1_3.h>
 #pragma warning ( pop )
 
+#include <stdio.h>
+#include <stdbool.h>
+
 #include "e02_vertex.h"
 #include "e02_pixel.h"
 
@@ -36,11 +39,27 @@ typedef struct {
 _Static_assert(_Alignof(ConstantBuffer) >= 16, "");
 
 typedef struct {
-    RawF4 pos;
-    RawF4 color;
+    RawF3 pos;
+    RawF3 color;
 } VertPosColor;
+_Static_assert(sizeof(VertPosColor) == 24, "");
+
+typedef struct RenderTarget {
+    ID3D11Texture2D         *pBackBuffer;
+    ID3D11RenderTargetView  *pBackBufferView;
+    D3D11_TEXTURE2D_DESC     descBackBuffer;
+    ID3D11Texture2D         *pDepthStencil;
+    ID3D11DepthStencilState *pDepthStencilState;
+    ID3D11DepthStencilView  *pDepthStencilView;
+} RenderTarget;
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+void releaseRenderTarget(RenderTarget *rt);
+HRESULT createRenderTarget(RenderTarget *rt, IDXGISwapChain *pSwapChain, ID3D11Device *pD3D11Device, ID3D11DeviceContext *pContext);
+
+MatF4x4 calculatePerspectiveTransform(float vfov, float aspect_ratio, float near_, float far_);
+MatF4x4 calculateViewTransform(VecF4 p_eye, VecF4 p_at, VecF4 v_up);
 
 const wchar_t CLASS_NAME[] = L"Sample Window Class";
 const wchar_t WINDOW_TITLE[] = L"Cube11";
@@ -48,6 +67,51 @@ const wchar_t WINDOW_TITLE[] = L"Cube11";
 const D3D_FEATURE_LEVEL levels[] = {
     D3D_FEATURE_LEVEL_11_0,
 };
+
+const RawF4 TEAL = { 0.098f, 0.439f, 0.439f, 1.000f };
+
+const RawF3 TRIANGLE_VERTS[] = {
+    {-0.5f, -0.5f, 0.5f},
+    { 0.5f, -0.5f, 0.5f},
+    { 0.0f,  0.5f, 0.5f},
+};
+
+const unsigned short TRIANGLE_INDICES[] = {
+    0, 2, 1,
+};
+
+const VertPosColor CUBE_VERTS[] = {
+    {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, 0.0f}},
+    {{-0.5f, -0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f,  0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f,  0.5f,  0.5f}, {0.0f, 1.0f, 1.0f}},
+    {{ 0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{ 0.5f, -0.5f,  0.5f}, {1.0f, 0.0f, 1.0f}},
+    {{ 0.5f,  0.5f, -0.5f}, {1.0f, 1.0f, 0.0f}},
+    {{ 0.5f,  0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}},
+};
+
+const unsigned short CUBE_INDICES[] = {
+    0, 2, 1, // -x
+    1, 2, 3,
+
+    4, 5, 6, // +x
+    5, 7, 6,
+
+    0, 1, 5, // -y
+    0, 5, 4,
+
+    2, 6, 7, // +y
+    2, 7, 3,
+
+    0, 4, 6, // -z
+    0, 6, 2,
+
+    1, 3, 7, // +z
+    1, 7, 5,
+};
+
+bool resize = false;
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
     (void)pCmdLine;
@@ -64,11 +128,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     IDXGIAdapter            *pAdapter           = NULL;
     IDXGIFactory            *pFactory           = NULL;
     IDXGISwapChain          *pSwapChain         = NULL;
-    ID3D11Texture2D         *pBackBuffer        = NULL;
-    ID3D11RenderTargetView  *pBackBufferView    = NULL;
-    ID3D11Texture2D         *pDepthStencil      = NULL;
-    ID3D11DepthStencilState *pDepthStencilState = NULL;
-    ID3D11DepthStencilView  *pDepthStencilView  = NULL;
     ID3D11VertexShader      *pVertexShader      = NULL;
     ID3D11InputLayout       *pInputLayout       = NULL;
     ID3D11PixelShader       *pPixelShader       = NULL;
@@ -76,9 +135,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     ID3D11Buffer            *pVertexBuffer      = NULL;
     ID3D11Buffer            *pIndexBuffer       = NULL;
 
-    D3D11_TEXTURE2D_DESC bb_desc;
+    RenderTarget renderTarget = { 0 };
 
     ConstantBuffer constant_buffer = { 0 };
+    int frame_count = 0;
+
+    // For debug output
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        FILE* fp = NULL;
+        if (freopen_s(&fp, "CONOUT$", "w", stdout)) {
+            setvbuf(stdout, NULL, _IONBF, 0);
+        }
+    }
+    printf("\n");
 
     //
     // === WINDOW SETUP ===
@@ -161,66 +230,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         CHECK_HR;
     }
 
-    { // Get the back buffer and create a view of it
-        hr = pSwapChain->lpVtbl->GetBuffer(pSwapChain, 0, &IID_ID3D11Texture2D, &pBackBuffer);
-        CHECK_HR;
-        hr = pD3D11Device->lpVtbl->CreateRenderTargetView(pD3D11Device, (ID3D11Resource *)pBackBuffer, NULL, &pBackBufferView);
-        CHECK_HR;
-    }
-
-    { // Create depth stencil buffer, view, and state
-        pBackBuffer->lpVtbl->GetDesc(pBackBuffer, &bb_desc);
-
-        D3D11_TEXTURE2D_DESC ds_desc = {
-            .Width = bb_desc.Width,
-            .Height = bb_desc.Height,
-            .MipLevels = 1,
-            .ArraySize = 1,
-            .Format = DXGI_FORMAT_D24_UNORM_S8_UINT,
-            .SampleDesc = { .Count = 1, .Quality = 0 },
-            .Usage = D3D11_USAGE_DEFAULT,
-            .BindFlags = D3D11_BIND_DEPTH_STENCIL,
-            .CPUAccessFlags = 0,
-            .MiscFlags = 0
-        };
-        hr = pD3D11Device->lpVtbl->CreateTexture2D(pD3D11Device, &ds_desc, NULL, &pDepthStencil);
-        CHECK_HR;
-
-        D3D11_DEPTH_STENCILOP_DESC ds_op_desc = {
-            .StencilFunc = D3D11_COMPARISON_ALWAYS,
-            .StencilDepthFailOp = D3D11_STENCIL_OP_KEEP,
-            .StencilPassOp = D3D11_STENCIL_OP_KEEP,
-            .StencilFailOp = D3D11_STENCIL_OP_KEEP
-        };
-        D3D11_DEPTH_STENCIL_DESC ds_state_desc = {
-            .DepthEnable = TRUE,
-            .DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL,
-            .DepthFunc = D3D11_COMPARISON_GREATER,
-            .StencilEnable = FALSE,
-            .StencilReadMask = D3D11_DEFAULT_STENCIL_READ_MASK,
-            .StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK,
-            .FrontFace = ds_op_desc,
-            .BackFace = ds_op_desc
-        };
-        hr = pD3D11Device->lpVtbl->CreateDepthStencilState(pD3D11Device, &ds_state_desc, &pDepthStencilState);
-        CHECK_HR;
-
-        D3D11_DEPTH_STENCIL_VIEW_DESC dsv_desc = {
-            .ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D,
-        };
-        hr = pD3D11Device->lpVtbl->CreateDepthStencilView(pD3D11Device, (ID3D11Resource *)pDepthStencil, &dsv_desc, &pDepthStencilView);
-        CHECK_HR;
-    }
-
-    { // Set viewport
-        D3D11_VIEWPORT viewport = {
-            .Width = (float)bb_desc.Width,
-            .Height = (float)bb_desc.Height,
-            .MinDepth = 0,
-            .MaxDepth = 0,
-        };
-        pContext->lpVtbl->RSSetViewports(pContext, 1, &viewport);
-    }
+    hr = createRenderTarget(&renderTarget, pSwapChain, pD3D11Device, pContext);
+    CHECK_HR;
 
     //
     // === SHADER SETUP ===
@@ -248,6 +259,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 .InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA,
                 .InstanceDataStepRate = 0
             },
+            /*
             {
                 .SemanticName = "COLOR",
                 .SemanticIndex = 0,
@@ -257,6 +269,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 .InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA,
                 .InstanceDataStepRate = 0
             },
+            */
         };
 
         hr = pD3D11Device->lpVtbl->CreateInputLayout(
@@ -281,6 +294,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         CHECK_HR;
     }
 
+    /*
     { // Create constant buffer
         D3D11_BUFFER_DESC cb_desc = {
             .ByteWidth = sizeof(ConstantBuffer),
@@ -295,30 +309,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         );
         CHECK_HR;
     }
+    */
 
     //
     // === CUBE SETUP ===
     // 
 
     { // Create vertex buffer
-        const VertPosColor CUBE_VERTS[] = {
-            {{-0.5f, -0.5f, -0.5f, 0.0f}, {0, 0, 0, 0}},
-            {{-0.5f, -0.5f,  0.5f, 0.0f}, {0, 0, 1, 0}},
-            {{-0.5f,  0.5f, -0.5f, 0.0f}, {0, 1, 0, 0}},
-            {{-0.5f,  0.5f,  0.5f, 0.0f}, {0, 1, 1, 0}},
-            {{ 0.5f, -0.5f, -0.5f, 0.0f}, {1, 0, 0, 0}},
-            {{ 0.5f, -0.5f,  0.5f, 0.0f}, {1, 0, 1, 0}},
-            {{ 0.5f,  0.5f, -0.5f, 0.0f}, {1, 1, 0, 0}},
-            {{ 0.5f,  0.5f,  0.5f, 0.0f}, {1, 1, 1, 0}},
-        };
-
         D3D11_BUFFER_DESC v_desc = {
-            .ByteWidth = sizeof(CUBE_VERTS),
+            .ByteWidth = sizeof(TRIANGLE_VERTS),
             .BindFlags = D3D11_BIND_VERTEX_BUFFER,
         };
 
         D3D11_SUBRESOURCE_DATA v_data = {
-            .pSysMem = CUBE_VERTS,
+            .pSysMem = TRIANGLE_VERTS,
             .SysMemPitch = 0,
             .SysMemSlicePitch = 0,
         };
@@ -333,33 +337,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     { // Create index buffer
-        const unsigned short CUBE_INDICES[] = {
-            0, 2, 1, // -x
-            1, 2, 3,
-
-            4, 5, 6, // +x
-            5, 7, 6,
-
-            0, 1, 5, // -y
-            0, 5, 4,
-
-            2, 6, 7, // +y
-            2, 7, 3,
-
-            0, 4, 6, // -z
-            0, 6, 2,
-
-            1, 3, 7, // +z
-            1, 7, 5,
-        };
-
         D3D11_BUFFER_DESC i_desc = {
-            .ByteWidth = sizeof(CUBE_INDICES),
+            .ByteWidth = sizeof(TRIANGLE_INDICES),
             .BindFlags = D3D11_BIND_INDEX_BUFFER,
         };
 
         D3D11_SUBRESOURCE_DATA i_data = {
-            .pSysMem = CUBE_INDICES,
+            .pSysMem = TRIANGLE_INDICES,
             .SysMemPitch = 0,
             .SysMemSlicePitch = 0,
         };
@@ -378,51 +362,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // using element_dot i.e. make sure all of your matrices are ready for 
     // multiplication on the CPU side
 
+    /*
     { // Calculate camera / view transform
         VecF4 p_eye = vf4_from_rf4((RawF4){ 0.0f,  0.7f, 1.5f, 1.0f });
         VecF4 p_at  = vf4_from_rf4((RawF4){ 0.0f, -0.1f, 0.0f, 1.0f });
         VecF4 v_up  = vf4_from_rf4((RawF4){ 0.0f,  1.0f, 0.0f, 0.0f });
 
-        VecF4 u_z = vf4_normalize(vf4_sub(p_eye, p_at));
-        VecF4 u_x = vf4_normalize(vf4_cross(v_up, u_z));
-        VecF4 u_y = vf4_normalize(vf4_cross(u_z, u_x));
-
-        // Output matrix is ready for element_dot, so we don't have to transpose it
-        MatF4x4 tf_view = mf4x4_inv_orthonormal_point(u_x, u_y, u_z, p_eye);
-        constant_buffer.view = rf16_from_mf4x4(tf_view);
+        constant_buffer.view = rf16_from_mf4x4(calculateViewTransform(p_eye, p_at, v_up));
     }
     
     { // Calculate the perspective transform
-        // parameters
-        const float half_vfov = 45;
-        const float aspect_ratio = (float)bb_desc.Width / (float)bb_desc.Height;
-        const float n = 0.01f;
-        const float f = 100.0f;
-
-        // pre-computations
-        const float tan_half_vfov = vf4_ss_get(vf4_tand(vf4_ss_set(half_vfov)));
-        const float f_sub_n = f - n;
-
-        // coefficients
-        VecF4 numerator = vf4_from_rf4((RawF4){ 1.0f, 1.0f, n, -n * f });
-        VecF4 denominator = vf4_from_rf4((RawF4){ 
-            aspect_ratio * tan_half_vfov,
-            tan_half_vfov,
-            f_sub_n,
-            f_sub_n
-        });
-        VecF4 coefficients = vf4_mul(numerator, vf4_reciprocal(denominator));
-
-        // move into vectors for matrix composition
-        VecF4 x = VF4_EXTRACT(coefficients, VF4_MASK4(1, 0, 0, 0));
-        VecF4 y = VF4_EXTRACT(coefficients, VF4_MASK4(0, 1, 0, 0));
-        VecF4 z = VF4_EXTRACT(coefficients, VF4_MASK4(0, 0, 1, 1));
-        VecF4 w = vf4_from_rf4((RawF4){ 0.0f, 0.0f, -1.0f, 0.0f });
-
-        // The above are constructed such that no transpose is required
-        MatF4x4 tf_perspective = mf4x4_from_vf4(x, y, z, w);
-        constant_buffer.projection = rf16_from_mf4x4(tf_perspective);
+        float aspect_ratio = (float)renderTarget.descBackBuffer.Width / (float)renderTarget.descBackBuffer.Height;
+        MatF4x4 transform = calculatePerspectiveTransform(90, aspect_ratio, 0.01f, 100.0f);
+        constant_buffer.projection = rf16_from_mf4x4(transform);
     }
+    */
 
     //
     // === RUN WINDOW ===
@@ -441,9 +395,59 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 TranslateMessage(&msg);
                 DispatchMessage(&msg);
             } else {
-                // update
-                // render
+                if (resize) { // Call resizeBuffers and recreate the back buffer
+                    resize = false;
+                    releaseRenderTarget(&renderTarget);
+                    hr = pSwapChain->lpVtbl->ResizeBuffers(pSwapChain, 0, 0, 0, DXGI_FORMAT_UNKNOWN, 0);
+                    CHECK_HR;
+                    hr = createRenderTarget(&renderTarget, pSwapChain, pD3D11Device, pContext);
+                    CHECK_HR;
+                    /*
+                    float aspect_ratio = (float)renderTarget.descBackBuffer.Width / (float)renderTarget.descBackBuffer.Height;
+                    MatF4x4 transform = calculatePerspectiveTransform(90, aspect_ratio, 0.01f, 100.0f);
+                    constant_buffer.projection = rf16_from_mf4x4(transform);
+                    */
+                }
+                { // Update
+                    /*
+                    constant_buffer.world = rf16_from_mf4x4(mf4x4_drotation_y((float)frame_count));
+                    */
+                    frame_count = (frame_count == 359 ? 0 : frame_count + 1);
+                }
+                { // render
+                    // pContext->lpVtbl->UpdateSubresource(pContext, (ID3D11Resource *)pConstantBuffer, 0, NULL, &constant_buffer, 0, 0);
+
+                    // Clear the render target and z-buffer.
+                    float color[4] = {(float)frame_count/359.0f, 1.0f, 1.0f - (float)frame_count/359.0f, 1.0f};
+                    pContext->lpVtbl->ClearRenderTargetView(pContext, renderTarget.pBackBufferView, color);
+                    pContext->lpVtbl->ClearDepthStencilView(pContext, renderTarget.pDepthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+                    // Bind the depth stencil state
+                    //pContext->lpVtbl->OMSetDepthStencilState(pContext, renderTarget.pDepthStencilState, 1);
+
+                    // Set the render target.
+                    pContext->lpVtbl->OMSetRenderTargets(pContext, 1, &renderTarget.pBackBufferView, renderTarget.pDepthStencilView);
+
+                    // Set up the IA stage by setting the input topology and layout.
+                    UINT stride = sizeof(RawF3);
+                    UINT offset = 0;
+                    pContext->lpVtbl->IASetVertexBuffers(pContext, 0, 1, &pVertexBuffer, &stride, &offset);
+                    pContext->lpVtbl->IASetIndexBuffer(pContext, pIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+                    pContext->lpVtbl->IASetPrimitiveTopology(pContext, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                    pContext->lpVtbl->IASetInputLayout(pContext, pInputLayout);
+
+                    // Set up the vertex shader stage.
+                    pContext->lpVtbl->VSSetShader(pContext, pVertexShader, NULL, 0);
+                    //pContext->lpVtbl->VSSetConstantBuffers(pContext, 0, 1, &pConstantBuffer);
+
+                    // Set up the pixel shader stage.
+                    pContext->lpVtbl->PSSetShader(pContext, pPixelShader, NULL, 0);
+
+                    // Caling Draw tells Direct3D to start sending commands to the graphics device.
+                    pContext->lpVtbl->DrawIndexed(pContext, ARRAYSIZE(TRIANGLE_INDICES), 0, 0);
+                }
                 // present
+                pSwapChain->lpVtbl->Present(pSwapChain, 1, 0);
             }
         }
     }
@@ -457,11 +461,7 @@ cleanup:
     RELEASE(pPixelShader);
     RELEASE(pInputLayout);
     RELEASE(pVertexShader);
-    RELEASE(pDepthStencilView);
-    RELEASE(pDepthStencilState);
-    RELEASE(pDepthStencil);
-    RELEASE(pBackBufferView);
-    RELEASE(pBackBuffer);
+    releaseRenderTarget(&renderTarget);
     RELEASE(pSwapChain);
     RELEASE(pFactory);
     RELEASE(pAdapter);
@@ -478,7 +478,122 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
+    case WM_SIZE:
+        resize = true;
     default:
         return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
+}
+
+void releaseRenderTarget(RenderTarget *rt) {
+#define RELEASE(p) { if (p) p->lpVtbl->Release(p); p = NULL; }
+    RELEASE(rt->pBackBuffer);
+    RELEASE(rt->pBackBufferView);
+    RELEASE(rt->pDepthStencil);
+    RELEASE(rt->pDepthStencilState);
+    RELEASE(rt->pDepthStencilView);
+#undef RELEASE
+}
+
+HRESULT createRenderTarget(RenderTarget *rt, IDXGISwapChain *pSwapChain, ID3D11Device *pD3D11Device, ID3D11DeviceContext *pContext) {
+    HRESULT hr = S_OK;
+    #define CHECK_HR { if (FAILED(hr)) goto exit; }
+
+    { // Get the back buffer and create a view of it
+        hr = pSwapChain->lpVtbl->GetBuffer(pSwapChain, 0, &IID_ID3D11Texture2D, &rt->pBackBuffer);
+        CHECK_HR;
+        hr = pD3D11Device->lpVtbl->CreateRenderTargetView(pD3D11Device, (ID3D11Resource *)rt->pBackBuffer, NULL, &rt->pBackBufferView);
+        CHECK_HR;
+    }
+
+    { // Create depth stencil buffer, view, and state
+        rt->pBackBuffer->lpVtbl->GetDesc(rt->pBackBuffer, &rt->descBackBuffer);
+
+        D3D11_TEXTURE2D_DESC descDepthStencil = {
+            .Width = rt->descBackBuffer.Width,
+            .Height = rt->descBackBuffer.Height,
+            .MipLevels = 1,
+            .ArraySize = 1,
+            .Format = DXGI_FORMAT_D24_UNORM_S8_UINT,
+            .SampleDesc = { .Count = 1, .Quality = 0 },
+            .Usage = D3D11_USAGE_DEFAULT,
+            .BindFlags = D3D11_BIND_DEPTH_STENCIL,
+            .CPUAccessFlags = 0,
+            .MiscFlags = 0
+        };
+        hr = pD3D11Device->lpVtbl->CreateTexture2D(pD3D11Device, &descDepthStencil, NULL, &rt->pDepthStencil);
+        CHECK_HR;
+
+        D3D11_DEPTH_STENCILOP_DESC descDepthStencilOp = {
+            .StencilFunc = D3D11_COMPARISON_ALWAYS,
+            .StencilDepthFailOp = D3D11_STENCIL_OP_KEEP,
+            .StencilPassOp = D3D11_STENCIL_OP_KEEP,
+            .StencilFailOp = D3D11_STENCIL_OP_KEEP
+        };
+        D3D11_DEPTH_STENCIL_DESC descDepthStencilState = {
+            .DepthEnable = TRUE,
+            .DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL,
+            .DepthFunc = D3D11_COMPARISON_GREATER,
+            .StencilEnable = FALSE,
+            .StencilReadMask = D3D11_DEFAULT_STENCIL_READ_MASK,
+            .StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK,
+            .FrontFace = descDepthStencilOp,
+            .BackFace = descDepthStencilOp
+        };
+        hr = pD3D11Device->lpVtbl->CreateDepthStencilState(pD3D11Device, &descDepthStencilState, &rt->pDepthStencilState);
+        CHECK_HR;
+
+        D3D11_DEPTH_STENCIL_VIEW_DESC descDepthStencilView = {
+            .ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D,
+        };
+        hr = pD3D11Device->lpVtbl->CreateDepthStencilView(pD3D11Device, (ID3D11Resource *)rt->pDepthStencil, &descDepthStencilView, &rt->pDepthStencilView);
+        CHECK_HR;
+    }
+
+    { // Set viewport
+        D3D11_VIEWPORT viewport = {
+            .Width = (float)rt->descBackBuffer.Width,
+            .Height = (float)rt->descBackBuffer.Height,
+            .MinDepth = 0,
+            .MaxDepth = 0,
+        };
+        pContext->lpVtbl->RSSetViewports(pContext, 1, &viewport);
+    }
+
+#undef CHECK_HR
+exit:
+    return hr;
+}
+
+MatF4x4 calculateViewTransform(VecF4 p_eye, VecF4 p_at, VecF4 v_up) {
+    VecF4 u_z = vf4_normalize(vf4_sub(p_eye, p_at));
+    VecF4 u_x = vf4_normalize(vf4_cross(v_up, u_z));
+    VecF4 u_y = vf4_normalize(vf4_cross(u_z, u_x));
+
+    // Output matrix is ready for element_dot, so we don't have to transpose it
+    return mf4x4_inv_orthonormal_point(u_x, u_y, u_z, p_eye);
+}
+
+MatF4x4 calculatePerspectiveTransform(float vfov, float aspect_ratio, float near_, float far_) {
+    const float half_vfov = vfov / 2.0f;
+
+    // pre-computations
+    float rcp_tan_half_vfov = 1 / vf4_ss_get(vf4_tand(vf4_ss_set(half_vfov)));
+    float rcp_f_sub_n = 1 / (far_ - near_);
+    float rcp_aspect_ratio = 1 / aspect_ratio;
+
+    // coefficients
+    float c_xx = rcp_aspect_ratio * rcp_tan_half_vfov;
+    float c_yy = rcp_tan_half_vfov;
+    float c_zz = near_ * rcp_f_sub_n;
+    float c_zw = -far_ * c_zz;
+
+    // move into vectors for matrix composition
+    VecF4 x = VF4_FROM(c_xx,    0,    0,    0);
+    VecF4 y = VF4_FROM(   0, c_yy,    0,    0);
+    VecF4 z = VF4_FROM(   0,    0, c_zz, c_zw);
+    VecF4 w = VF4_FROM(   0,    0,    1,    0);
+
+    // Matrix is ready for element_dot, so we don't have to transpose it
+    return mf4x4_from_vf4(x, y, z, w);
 }

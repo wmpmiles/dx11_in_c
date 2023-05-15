@@ -5,6 +5,15 @@ typedef union {
         float x;
         float y;
         float z;
+    };
+    float values[3];
+} RawF3;
+
+typedef union {
+    struct {
+        float x;
+        float y;
+        float z;
         float w;
     };
     _Alignas(16) float values[4];
@@ -130,6 +139,14 @@ VecF4 __vectorcall vf4_tand(VecF4 vec) {
     return (VecF4){ _mm_tand_ps(vec.value) };
 }
 
+VecF4 __vectorcall vf4_sind(VecF4 vec) {
+    return (VecF4){ _mm_sind_ps(vec.value) };
+}
+
+VecF4 __vectorcall vf4_cosd(VecF4 vec) {
+    return (VecF4){ _mm_cosd_ps(vec.value) };
+}
+
 VecF4 __vectorcall vf4_rsqrt(VecF4 vec) {
     return (VecF4){ _mm_rsqrt_ps(vec.value) };
 }
@@ -217,4 +234,15 @@ MatF4x4 __vectorcall mf4x4_inv_orthonormal_point(VecF4 u_x, VecF4 u_y, VecF4 u_z
     rotation.y = VF4_MOVE(rotation.y, VF4_SHUFFLE(point, VF4_SHUFFLE_CTRL(0, 0, 0, 1)), VF4_MASK4(0, 0, 0, 1));
     rotation.z = VF4_MOVE(rotation.z, VF4_SHUFFLE(point, VF4_SHUFFLE_CTRL(0, 0, 0, 2)), VF4_MASK4(0, 0, 0, 1));
     return rotation;
+}
+
+MatF4x4 __vectorcall mf4x4_drotation_y(float degrees) {
+    float s = vf4_ss_get(vf4_sind(vf4_ss_set(degrees)));
+    float c = vf4_ss_get(vf4_cosd(vf4_ss_set(degrees)));
+    return mf4x4_from_vf4(
+        VF4_FROM( c, 0, s, 0),
+        VF4_FROM( 0, 1, 0, 0),
+        VF4_FROM(-s, 0, c, 0),
+        VF4_FROM( 0, 0, 0, 1)
+    );
 }
