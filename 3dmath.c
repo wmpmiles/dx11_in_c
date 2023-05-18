@@ -55,6 +55,8 @@ typedef union {
 #define VF4_E2 (vf4_from_rf4((RawF4){ 0.0f, 0.0f, 1.0f, 0.0f }))
 #define VF4_E3 (vf4_from_rf4((RawF4){ 0.0f, 0.0f, 0.0f, 1.0f }))
 
+#define MF4X4_IDENTITY (mf4x4_from_vf4(VF4_E0, VF4_E1, VF4_E2, VF4_E3))
+
 //
 // === MACRO FUNCTIONS ===
 //

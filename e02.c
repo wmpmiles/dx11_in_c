@@ -8,26 +8,12 @@
 #define UNICODE
 #endif
 
-#pragma warning ( push )
-#pragma warning ( disable: 4668 )
 #include <windows.h>
-#pragma warning ( pop )
-
-#pragma warning ( push )
-#pragma warning ( disable: 4820 4201 )
 #include <d3d11.h>
-#pragma warning ( pop )
-
-#pragma warning ( push )
-#pragma warning ( disable: 4820 )
 #include <dxgi1_3.h>
-#pragma warning ( pop )
 
 #include <stdio.h>
 #include <stdbool.h>
-
-#include "e02_vertex.h"
-#include "e02_pixel.h"
 
 #include "3dmath.c"
 
@@ -37,6 +23,7 @@ typedef struct {
     _Alignas(64) RawF16 projection;
 } ConstantBuffer;
 _Static_assert(_Alignof(ConstantBuffer) >= 16, "");
+_Static_assert(sizeof(ConstantBuffer) == 192, "");
 
 typedef struct {
     RawF3 pos;
@@ -47,10 +34,10 @@ _Static_assert(sizeof(VertPosColor) == 24, "");
 typedef struct RenderTarget {
     ID3D11Texture2D         *pBackBuffer;
     ID3D11RenderTargetView  *pBackBufferView;
-    D3D11_TEXTURE2D_DESC     descBackBuffer;
     ID3D11Texture2D         *pDepthStencil;
     ID3D11DepthStencilState *pDepthStencilState;
     ID3D11DepthStencilView  *pDepthStencilView;
+    D3D11_TEXTURE2D_DESC     descBackBuffer;
 } RenderTarget;
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -71,9 +58,9 @@ const D3D_FEATURE_LEVEL levels[] = {
 const RawF4 TEAL = { 0.098f, 0.439f, 0.439f, 1.000f };
 
 const RawF3 TRIANGLE_VERTS[] = {
-    {-0.5f, -0.5f, 0.5f},
-    { 0.5f, -0.5f, 0.5f},
-    { 0.0f,  0.5f, 0.5f},
+    {-0.5f, -0.5f, -1.0f},
+    { 0.5f, -0.5f, -1.0f},
+    { 0.0f,  0.5f, -1.0f},
 };
 
 const unsigned short TRIANGLE_INDICES[] = {
@@ -237,7 +224,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // === SHADER SETUP ===
     //
 
-    { // Create vertex shader
+    { // Create vertex shader and input layout
+#include "e02_vertex.h"
         hr = pD3D11Device->lpVtbl->CreateVertexShader(
             pD3D11Device,
             vertex_shader,
@@ -246,9 +234,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             &pVertexShader
         );
         CHECK_HR;
-    }
 
-    { // Create input layout
         D3D11_INPUT_ELEMENT_DESC vsi_desc[] = {
             {
                 .SemanticName = "POSITION",
@@ -284,6 +270,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     { // Create pixel shader
+#include "e02_pixel.h"
         hr = pD3D11Device->lpVtbl->CreatePixelShader(
             pD3D11Device,
             pixel_shader,
@@ -294,7 +281,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         CHECK_HR;
     }
 
-    /*
     { // Create constant buffer
         D3D11_BUFFER_DESC cb_desc = {
             .ByteWidth = sizeof(ConstantBuffer),
@@ -309,7 +295,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         );
         CHECK_HR;
     }
-    */
 
     //
     // === CUBE SETUP ===
@@ -362,21 +347,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // using element_dot i.e. make sure all of your matrices are ready for 
     // multiplication on the CPU side
 
-    /*
     { // Calculate camera / view transform
         VecF4 p_eye = vf4_from_rf4((RawF4){ 0.0f,  0.7f, 1.5f, 1.0f });
         VecF4 p_at  = vf4_from_rf4((RawF4){ 0.0f, -0.1f, 0.0f, 1.0f });
         VecF4 v_up  = vf4_from_rf4((RawF4){ 0.0f,  1.0f, 0.0f, 0.0f });
 
-        constant_buffer.view = rf16_from_mf4x4(calculateViewTransform(p_eye, p_at, v_up));
+        // constant_buffer.view = rf16_from_mf4x4(calculateViewTransform(p_eye, p_at, v_up));
+        constant_buffer.view = rf16_from_mf4x4(MF4X4_IDENTITY);
+
     }
     
     { // Calculate the perspective transform
         float aspect_ratio = (float)renderTarget.descBackBuffer.Width / (float)renderTarget.descBackBuffer.Height;
         MatF4x4 transform = calculatePerspectiveTransform(90, aspect_ratio, 0.01f, 100.0f);
         constant_buffer.projection = rf16_from_mf4x4(transform);
+        //constant_buffer.projection = rf16_from_mf4x4(MF4X4_IDENTITY);
     }
-    */
 
     //
     // === RUN WINDOW ===
@@ -397,33 +383,33 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             } else {
                 if (resize) { // Call resizeBuffers and recreate the back buffer
                     resize = false;
+
                     releaseRenderTarget(&renderTarget);
                     hr = pSwapChain->lpVtbl->ResizeBuffers(pSwapChain, 0, 0, 0, DXGI_FORMAT_UNKNOWN, 0);
                     CHECK_HR;
                     hr = createRenderTarget(&renderTarget, pSwapChain, pD3D11Device, pContext);
                     CHECK_HR;
-                    /*
+
                     float aspect_ratio = (float)renderTarget.descBackBuffer.Width / (float)renderTarget.descBackBuffer.Height;
                     MatF4x4 transform = calculatePerspectiveTransform(90, aspect_ratio, 0.01f, 100.0f);
                     constant_buffer.projection = rf16_from_mf4x4(transform);
-                    */
                 }
                 { // Update
-                    /*
-                    constant_buffer.world = rf16_from_mf4x4(mf4x4_drotation_y((float)frame_count));
-                    */
+                    //constant_buffer.world = rf16_from_mf4x4(mf4x4_drotation_y((float)frame_count));
+                    constant_buffer.world = rf16_from_mf4x4(MF4X4_IDENTITY);
                     frame_count = (frame_count == 359 ? 0 : frame_count + 1);
                 }
                 { // render
-                    // pContext->lpVtbl->UpdateSubresource(pContext, (ID3D11Resource *)pConstantBuffer, 0, NULL, &constant_buffer, 0, 0);
+                    // Update the constant buffer
+                    pContext->lpVtbl->UpdateSubresource(pContext, (ID3D11Resource *)pConstantBuffer, 0, NULL, &constant_buffer, 0, 0);
 
                     // Clear the render target and z-buffer.
                     float color[4] = {(float)frame_count/359.0f, 1.0f, 1.0f - (float)frame_count/359.0f, 1.0f};
                     pContext->lpVtbl->ClearRenderTargetView(pContext, renderTarget.pBackBufferView, color);
-                    pContext->lpVtbl->ClearDepthStencilView(pContext, renderTarget.pDepthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+                    pContext->lpVtbl->ClearDepthStencilView(pContext, renderTarget.pDepthStencilView, D3D11_CLEAR_DEPTH, 0.0f, 0);
 
                     // Bind the depth stencil state
-                    //pContext->lpVtbl->OMSetDepthStencilState(pContext, renderTarget.pDepthStencilState, 1);
+                    pContext->lpVtbl->OMSetDepthStencilState(pContext, renderTarget.pDepthStencilState, 1);
 
                     // Set the render target.
                     pContext->lpVtbl->OMSetRenderTargets(pContext, 1, &renderTarget.pBackBufferView, renderTarget.pDepthStencilView);
@@ -438,7 +424,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
                     // Set up the vertex shader stage.
                     pContext->lpVtbl->VSSetShader(pContext, pVertexShader, NULL, 0);
-                    //pContext->lpVtbl->VSSetConstantBuffers(pContext, 0, 1, &pConstantBuffer);
+                    pContext->lpVtbl->VSSetConstantBuffers(pContext, 0, 1, &pConstantBuffer);
 
                     // Set up the pixel shader stage.
                     pContext->lpVtbl->PSSetShader(pContext, pPixelShader, NULL, 0);
@@ -514,7 +500,7 @@ HRESULT createRenderTarget(RenderTarget *rt, IDXGISwapChain *pSwapChain, ID3D11D
             .Height = rt->descBackBuffer.Height,
             .MipLevels = 1,
             .ArraySize = 1,
-            .Format = DXGI_FORMAT_D24_UNORM_S8_UINT,
+            .Format = DXGI_FORMAT_D32_FLOAT,
             .SampleDesc = { .Count = 1, .Quality = 0 },
             .Usage = D3D11_USAGE_DEFAULT,
             .BindFlags = D3D11_BIND_DEPTH_STENCIL,
@@ -533,7 +519,7 @@ HRESULT createRenderTarget(RenderTarget *rt, IDXGISwapChain *pSwapChain, ID3D11D
         D3D11_DEPTH_STENCIL_DESC descDepthStencilState = {
             .DepthEnable = TRUE,
             .DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL,
-            .DepthFunc = D3D11_COMPARISON_GREATER,
+            .DepthFunc = D3D11_COMPARISON_GREATER_EQUAL,
             .StencilEnable = FALSE,
             .StencilReadMask = D3D11_DEFAULT_STENCIL_READ_MASK,
             .StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK,
@@ -586,13 +572,13 @@ MatF4x4 calculatePerspectiveTransform(float vfov, float aspect_ratio, float near
     float c_xx = rcp_aspect_ratio * rcp_tan_half_vfov;
     float c_yy = rcp_tan_half_vfov;
     float c_zz = near_ * rcp_f_sub_n;
-    float c_zw = -far_ * c_zz;
+    float c_zw = near_ * far_ * rcp_f_sub_n;
 
     // move into vectors for matrix composition
     VecF4 x = VF4_FROM(c_xx,    0,    0,    0);
     VecF4 y = VF4_FROM(   0, c_yy,    0,    0);
     VecF4 z = VF4_FROM(   0,    0, c_zz, c_zw);
-    VecF4 w = VF4_FROM(   0,    0,    1,    0);
+    VecF4 w = VF4_FROM(   0,    0,   -1,    0);
 
     // Matrix is ready for element_dot, so we don't have to transpose it
     return mf4x4_from_vf4(x, y, z, w);

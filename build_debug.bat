@@ -1,0 +1,1 @@
+cl /std:c17 /arch:AVX2 /W4 /Zi /Fe:debug.exe e02.c /link /DEBUG:FULL
