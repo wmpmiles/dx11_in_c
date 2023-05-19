@@ -1,1 +1,1 @@
-cl /std:c17 /arch:AVX2 /Wall /Zi test_3dmath.c /link /DEBUG:FULL
+cl /std:c17 /arch:AVX2 /Wall /Zi 3dmath_test.c /link /DEBUG:FULL

@@ -216,7 +216,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     //
 
     { // Create vertex shader and input layout
-#include "e02_vertex.h"
+#include "cube11_vertex.h"
         hr = pD3D11Device->lpVtbl->CreateVertexShader(
             pD3D11Device,
             vertex_shader,
@@ -259,7 +259,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     { // Create pixel shader
-#include "e02_pixel.h"
+#include "cube11_pixel.h"
         hr = pD3D11Device->lpVtbl->CreatePixelShader(
             pD3D11Device,
             pixel_shader,

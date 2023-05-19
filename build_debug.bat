@@ -1,1 +1,1 @@
-cl /std:c17 /arch:AVX2 /W4 /Zi /Fe:debug.exe e02.c /link /DEBUG:FULL
+cl /std:c17 /arch:AVX2 /W4 /Zi /Fe:debug.exe cube11.c /link /DEBUG:FULL

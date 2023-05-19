@@ -1,1 +1,1 @@
-cl /std:c17 /arch:AVX2 /Wall /O2 /Fe:release.exe e02.c
+cl /std:c17 /arch:AVX2 /Wall /O2 /Fe:release.exe cube11.c
